@@ -16,8 +16,11 @@ import { requestOTP, verifyOTP } from '../api/auth';
 import { getProfile, searchUsers, User } from '../api/users';
 import { getUserChats, createOrGetChat, Chat } from '../api/chats';
 import { getChatMessages, sendMessage, Message } from '../api/messages';
+import { getCallHistory, Call } from '../api/calls';
 import { ChatSocket } from '../sockets/chatSocket';
 import ChatWindow from './ChatWindow';
+import VoiceCallComponent from './VoiceCallComponent';
+import { useVoiceCall } from '../hooks/useVoiceCall';
 
 export default function ChatApp() {
   // Session storage key
@@ -82,6 +85,7 @@ export default function ChatApp() {
   const socketRef = useRef<ChatSocket | null>(null);
   const socketInitializedRef = useRef(false);
   const [messages, setMessages] = useState<Message[]>([]);
+  const [callHistory, setCallHistory] = useState<Call[]>([]);
   const [otherUserName, setOtherUserName] = useState<string | null>(null);
 
   // Keep ref in sync with state
@@ -101,6 +105,15 @@ export default function ChatApp() {
   // Request state to prevent duplicate rapid requests
   const [isSendingMessage, setIsSendingMessage] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+
+  // Voice call state
+  const {
+    callState,
+    initiateCall: initiateCallHandler,
+    answerCall: answerCallHandler,
+    rejectCall: rejectCallHandler,
+    endCall: endCallHandler,
+  } = useVoiceCall(socket, token);
 
   /**
    * Step 1: Request OTP
@@ -267,8 +280,8 @@ export default function ChatApp() {
     // Create or get chat with selected user
     await handleCreateOrSelectChat(user.id);
 
-    // Refresh chat list to include the new chat
-    await loadChats();
+    // Chat list will be updated via socket event (chat:new)
+    // No need to call loadChats() here
   };
 
   /**
@@ -288,9 +301,8 @@ export default function ChatApp() {
           (chat.participants ? chat.participants.find((p) => p.id !== userId) : null);
         setOtherUserName(otherUser?.username || otherUser?.phone || 'Unknown');
 
-        // Load messages for this chat (use chatId if available, otherwise id)
-        // Note: loadChatMessages is defined later, so we'll call it directly
-        if (token) {
+        // Load messages and call history for this chat
+        if (token && userId) {
           try {
             const chatMessages = await getChatMessages(token, chatIdToUse);
             if (Array.isArray(chatMessages)) {
@@ -300,8 +312,11 @@ export default function ChatApp() {
               );
               setMessages(sorted);
             }
+
+            // Load call history using the function
+            await loadCallHistory(chatIdToUse, otherUser?.id);
           } catch (error: any) {
-            console.error('Failed to load messages:', error);
+            console.error('Failed to load messages/call history:', error);
           }
         }
       } catch (error: any) {
@@ -309,6 +324,73 @@ export default function ChatApp() {
       }
     },
     [token, userId]
+  );
+
+  /**
+   * Load call history for the selected chat
+   */
+  const loadCallHistory = useCallback(
+    async (chatId: string, otherUserId?: string) => {
+      if (!token || !userId) {
+        console.warn('⚠️ [COMPONENT] Cannot load call history: Missing token or userId');
+        return;
+      }
+
+      try {
+        console.log('📞 [COMPONENT] Loading call history for chat:', {
+          chatId,
+          userId,
+          otherUserId,
+        });
+
+        const calls = await getCallHistory(token, 100);
+        console.log('📞 [COMPONENT] All calls received from API:', calls.length);
+
+        // Get otherUserId from parameter or find from chats
+        let targetOtherUserId = otherUserId;
+        if (!targetOtherUserId) {
+          const selectedChat = chats.find(c => (c.chatId || c.id) === chatId);
+          targetOtherUserId = selectedChat?.otherParticipant?.id;
+        }
+
+        console.log('📞 [COMPONENT] Filtering calls:', {
+          userId,
+          targetOtherUserId,
+          chatId,
+        });
+
+        if (targetOtherUserId) {
+          const relevantCalls = calls.filter(
+            call => {
+              // Handle both new format (caller/receiver objects) and legacy format (callerId/receiverId)
+              const callerId = call.caller?.id || call.callerId;
+              const receiverId = call.receiver?.id || call.receiverId;
+
+              const isRelevant = (
+                (callerId === userId && receiverId === targetOtherUserId) ||
+                (callerId === targetOtherUserId && receiverId === userId)
+              );
+
+              return isRelevant;
+            }
+          );
+
+          setCallHistory(relevantCalls);
+          console.log('✅ [COMPONENT] Call history loaded and set:', {
+            totalCalls: calls.length,
+            relevantCalls: relevantCalls.length,
+            callIds: relevantCalls.map(c => c.id),
+          });
+        } else {
+          console.warn('⚠️ [COMPONENT] No otherUserId found for chat:', chatId);
+          setCallHistory([]);
+        }
+      } catch (error) {
+        console.error('❌ [COMPONENT] Failed to load call history:', error);
+        setCallHistory([]);
+      }
+    },
+    [token, userId, chats]
   );
 
   /**
@@ -382,13 +464,15 @@ export default function ChatApp() {
           (chat.participants ? chat.participants.find((p) => p.id !== userId) : null);
         setOtherUserName(otherUser?.username || otherUser?.phone || 'Unknown');
 
-        // Load messages for this chat
+        // Load messages and call history for this chat
         await loadChatMessages(chatIdToUse);
+        // Pass otherUserId to ensure it's available even if chats array hasn't updated yet
+        await loadCallHistory(chatIdToUse, otherUser?.id);
       } catch (error: any) {
         console.error('Failed to select chat:', error);
       }
     },
-    [token, userId, loadChatMessages]
+    [token, userId, loadChatMessages, loadCallHistory]
   );
 
   /**
@@ -448,13 +532,8 @@ export default function ChatApp() {
         // Note: Backend will emit message:new event via socket after REST API call
         // No need to send via socket separately - the socket event will handle real-time sync
 
-        // Refresh chats to update last message (with error handling)
-        try {
-          await loadChats();
-        } catch (chatError: any) {
-          // Don't fail message send if chat refresh fails
-          console.warn('⚠️ [COMPONENT] Failed to refresh chats after sending message:', chatError);
-        }
+        // Chat list will be updated via socket events (chat:updated or message:new)
+        // No need to call loadChats() here to avoid API spam
       } catch (error: any) {
         console.error('Failed to send message:', error);
 
@@ -542,8 +621,86 @@ export default function ChatApp() {
             return prev;
           });
 
-          // Refresh chats to update last message
-          loadChats();
+          // Update chat list to reflect new last message
+          setChats((prevChats) => {
+            const chatIdToUpdate = message.chatId;
+            const chatIndex = prevChats.findIndex(
+              (c) => (c.chatId || c.id) === chatIdToUpdate
+            );
+
+            if (chatIndex >= 0) {
+              // Update existing chat's last message
+              const updatedChats = [...prevChats];
+              updatedChats[chatIndex] = {
+                ...updatedChats[chatIndex],
+                lastMessage: {
+                  _id: message.id,
+                  id: message.id,
+                  content: message.content,
+                  type: message.type || 'text',
+                  status: message.isRead ? 'read' : message.isDelivered ? 'delivered' : 'sent',
+                  createdAt: message.createdAt,
+                },
+                lastMessageAt: message.createdAt,
+              };
+              // Move updated chat to top (most recent first)
+              const [updatedChat] = updatedChats.splice(chatIndex, 1);
+              return [updatedChat, ...updatedChats];
+            } else {
+              // Chat not in list yet, might need to load it
+              // But don't call loadChats here to avoid API spam
+              console.log('ℹ️ [COMPONENT] Message for chat not in list, will be added via chat:new event');
+              return prevChats;
+            }
+          });
+        },
+        onChatNew: (chat) => {
+          console.log('✅ [COMPONENT] New chat received via socket:', {
+            chatId: chat.chatId || chat.id,
+            otherParticipant: chat.otherParticipant?.username || chat.otherParticipant?.phone,
+          });
+          // Add new chat to the list
+          setChats((prevChats) => {
+            // Check if chat already exists
+            const exists = prevChats.some(
+              (c) => (c.chatId || c.id) === (chat.chatId || chat.id)
+            );
+            if (exists) {
+              return prevChats;
+            }
+            // Add to beginning of list
+            return [chat, ...prevChats];
+          });
+        },
+        onChatUpdated: (chat) => {
+          console.log('✅ [COMPONENT] Chat updated via socket:', {
+            chatId: chat.chatId || chat.id,
+            hasLastMessage: !!chat.lastMessage,
+          });
+          // Update existing chat in the list
+          setChats((prevChats) => {
+            const chatIdToUpdate = chat.chatId || chat.id;
+            const chatIndex = prevChats.findIndex(
+              (c) => (c.chatId || c.id) === chatIdToUpdate
+            );
+
+            if (chatIndex >= 0) {
+              // Update existing chat
+              const updatedChats = [...prevChats];
+              updatedChats[chatIndex] = {
+                ...updatedChats[chatIndex],
+                ...chat,
+                // Preserve otherParticipant if not provided in update
+                otherParticipant: chat.otherParticipant || updatedChats[chatIndex].otherParticipant,
+              };
+              // Move updated chat to top (most recent first)
+              const [updatedChat] = updatedChats.splice(chatIndex, 1);
+              return [updatedChat, ...updatedChats];
+            } else {
+              // Chat not in list, add it
+              return [chat, ...prevChats];
+            }
+          });
         },
         onMessageRead: (data) => {
           console.log('📖 [COMPONENT] Message read receipt received:', data);
@@ -576,6 +733,45 @@ export default function ChatApp() {
         },
         onChatLeft: (data) => {
           console.log('✅ [COMPONENT] Successfully left chat room:', data.chatId);
+        },
+        onUserOnline: (userId) => {
+          console.log('✅ [COMPONENT] User came online:', userId);
+          // Update online status in chat list
+          setChats((prevChats) =>
+            prevChats.map((chat) => {
+              const otherParticipant = chat.otherParticipant;
+              if (otherParticipant && otherParticipant.id === userId) {
+                return {
+                  ...chat,
+                  otherParticipant: {
+                    ...otherParticipant,
+                    isOnline: true,
+                  },
+                };
+              }
+              return chat;
+            })
+          );
+        },
+        onUserOffline: (userId) => {
+          console.log('✅ [COMPONENT] User went offline:', userId);
+          // Update online status in chat list
+          setChats((prevChats) =>
+            prevChats.map((chat) => {
+              const otherParticipant = chat.otherParticipant;
+              if (otherParticipant && otherParticipant.id === userId) {
+                return {
+                  ...chat,
+                  otherParticipant: {
+                    ...otherParticipant,
+                    isOnline: false,
+                    lastSeen: new Date().toISOString(),
+                  },
+                };
+              }
+              return chat;
+            })
+          );
         },
         onConnect: () => {
           console.log('Socket connected');
@@ -623,19 +819,56 @@ export default function ChatApp() {
 
   return (
     <div className="flex flex-col h-screen bg-gray-900">
-      {/* Header with user identity */}
-      <div className="p-4 border-b border-gray-700 bg-gray-800">
-        <h2 className="text-lg font-bold text-white">Chat App</h2>
-        {authStep === 'authenticated' && (
-          <div className="text-sm text-gray-400">
-            {username || phone} ({userId?.substring(0, 8)}...)
+      {/* Fixed Header with user identity, call button, and connection status */}
+      <div className="fixed top-0 left-0 right-0 z-50 p-4 border-b border-gray-700 bg-gray-800">
+        <div className="flex items-center justify-between">
+          <div>
+            <h2 className="text-lg font-bold text-white">Chat App</h2>
+            {authStep === 'authenticated' && (
+              <div className="text-sm text-gray-400">
+                {username || phone} ({userId?.substring(0, 8)}...)
+              </div>
+            )}
           </div>
-        )}
+          {authStep === 'authenticated' && (
+            <div className="flex items-center gap-3">
+              {/* Call button - show when chat is selected */}
+              {selectedChatId && (() => {
+                const currentChat = chats.find(
+                  (c) => (c.chatId || c.id) === selectedChatId
+                );
+                const otherUser = currentChat?.otherParticipant;
+                const otherUserId = otherUser?.id;
+
+                if (otherUserId && callState.status === 'idle') {
+                  return (
+                    <button
+                      onClick={() => initiateCallHandler(otherUserId)}
+                      className="px-3 py-1.5 bg-green-600 text-white text-sm rounded hover:bg-green-700 transition-colors flex items-center gap-1"
+                      title="Call user"
+                    >
+                      📞 Call
+                    </button>
+                  );
+                }
+                return null;
+              })()}
+              {/* Connection status */}
+              <div className="flex items-center gap-2">
+                <div className={`w-2 h-2 rounded-full ${socket?.isConnected() ? 'bg-green-500' : 'bg-red-500'}`}
+                     title={socket?.isConnected() ? 'Socket Connected' : 'Socket Disconnected'} />
+                <span className="text-xs text-gray-400">
+                  {socket?.isConnected() ? 'Connected' : 'Disconnected'}
+                </span>
+              </div>
+            </div>
+          )}
+        </div>
       </div>
 
       {/* Authentication UI */}
       {authStep === 'phone' && (
-        <div className="p-4 space-y-2">
+        <div className="p-4 space-y-2 mt-[80px]">
           <input
             type="text"
             value={phone}
@@ -654,7 +887,7 @@ export default function ChatApp() {
       )}
 
       {authStep === 'otp' && (
-        <div className="p-4 space-y-2">
+        <div className="p-4 space-y-2 mt-[80px]">
           <div className="text-sm text-gray-400">OTP sent to {phone}</div>
           <input
             type="text"
@@ -675,7 +908,7 @@ export default function ChatApp() {
 
       {/* Main chat interface */}
       {authStep === 'authenticated' && (
-        <div className="flex flex-1 overflow-hidden">
+        <div className="flex flex-1 overflow-hidden mt-[80px]">
           {/* Chat list sidebar */}
           <div className="w-64 border-r border-gray-700 bg-gray-800 overflow-y-auto flex flex-col">
             <div className="p-2 font-semibold border-b border-gray-700 text-white">
@@ -815,20 +1048,6 @@ export default function ChatApp() {
           <div className="flex-1 flex flex-col">
             {selectedChatId ? (
               <>
-                {/* Connection status indicator */}
-                <div className="p-2 bg-gray-800 border-b border-gray-700 flex items-center justify-between">
-                  <div className="text-xs text-gray-400">
-                    Chat: {selectedChatId.substring(0, 20)}...
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <div className={`w-2 h-2 rounded-full ${socket?.isConnected() ? 'bg-green-500' : 'bg-red-500'}`}
-                         title={socket?.isConnected() ? 'Socket Connected' : 'Socket Disconnected'} />
-                    <span className="text-xs text-gray-400">
-                      {socket?.isConnected() ? 'Connected' : 'Disconnected'}
-                    </span>
-                  </div>
-                </div>
-
                 {errorMessage && (
                   <div className="p-2 bg-red-900/50 border-b border-red-700 text-red-200 text-sm text-center">
                     {errorMessage}
@@ -836,6 +1055,7 @@ export default function ChatApp() {
                 )}
                 <ChatWindow
                   messages={messages}
+                  callHistory={callHistory}
                   currentUserId={userId!}
                   otherUserName={otherUserName || undefined}
                   onSendMessage={handleSendMessage}
@@ -849,6 +1069,35 @@ export default function ChatApp() {
             )}
           </div>
         </div>
+      )}
+
+      {/* Voice Call Component */}
+      {authStep === 'authenticated' && (
+        <VoiceCallComponent
+          callState={callState}
+          onInitiateCall={initiateCallHandler}
+          onAnswerCall={answerCallHandler}
+          onRejectCall={rejectCallHandler}
+          onEndCall={async () => {
+            await endCallHandler();
+            // Refresh call history after ending call
+            if (selectedChatId) {
+              await loadCallHistory(selectedChatId);
+            }
+          }}
+          callerName={(() => {
+            if (callState.callerId) {
+              const callerChat = chats.find(
+                (c) => c.otherParticipant?.id === callState.callerId
+              );
+              return callerChat?.otherParticipant?.username ||
+                     callerChat?.otherParticipant?.phone ||
+                     'Unknown User';
+            }
+            return undefined;
+          })()}
+          receiverName={otherUserName || undefined}
+        />
       )}
     </div>
   );

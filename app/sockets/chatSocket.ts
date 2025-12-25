@@ -26,6 +26,36 @@ import { Message, MessageApiResponse, transformMessage } from '../api/messages';
 // Base URL for Socket.IO (same as REST API)
 const SOCKET_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:3000';
 
+export interface Chat {
+  id: string;
+  chatId: string;
+  otherParticipant?: {
+    id: string;
+    phone: string;
+    username?: string;
+    isOnline?: boolean;
+    lastSeen?: string;
+  };
+  lastMessage?: {
+    _id?: string;
+    id?: string;
+    content: string;
+    type: string;
+    status?: string;
+    createdAt: string;
+  };
+  lastMessageAt?: string;
+  createdAt: string;
+}
+
+export interface RTCConfiguration {
+  iceServers: Array<{
+    urls: string | string[];
+    username?: string;
+    credential?: string;
+  }>;
+}
+
 export interface ChatSocketCallbacks {
   onMessageNew?: (message: Message) => void;
   onMessageSent?: (message: Message) => void;
@@ -33,8 +63,21 @@ export interface ChatSocketCallbacks {
   onMessageDelivered?: (data: { chatId: string; deliveredTo?: string; timestamp?: string }) => void;
   onChatJoined?: (data: { chatId: string }) => void;
   onChatLeft?: (data: { chatId: string }) => void;
+  onChatNew?: (chat: Chat) => void;
+  onChatUpdated?: (chat: Chat) => void;
   onUserOnline?: (userId: string) => void;
   onUserOffline?: (userId: string) => void;
+  // Call events
+  onCallIncoming?: (data: { callId: string; callerId: string; rtcConfig?: RTCConfiguration }) => void;
+  onCallInitiated?: (data: { callId: string; receiverId: string; rtcConfig?: RTCConfiguration }) => void;
+  onCallAnswered?: (data: { callId: string; receiverId?: string }) => void;
+  onCallConnected?: (data: { callId: string; callerId?: string }) => void;
+  onCallRejected?: (data: { callId: string }) => void;
+  onCallEnded?: (data: { callId: string; endedBy: string }) => void;
+  onCallWebRTCOffer?: (data: { callId: string; offer: RTCSessionDescriptionInit; callerId: string }) => void;
+  onCallWebRTCAnswer?: (data: { callId: string; answer: RTCSessionDescriptionInit; receiverId: string }) => void;
+  onCallWebRTCICECandidate?: (data: { callId: string; candidate: RTCIceCandidateInit; senderId: string }) => void;
+  onCallError?: (error: { message: string }) => void;
   onConnect?: () => void;
   onDisconnect?: () => void;
   onError?: (error: Error) => void;
@@ -48,6 +91,18 @@ export class ChatSocket {
   private socket: Socket | null = null;
   private token: string;
   private callbacks: ChatSocketCallbacks;
+
+  // Expose call event handlers for dynamic assignment
+  public onCallIncoming?: (data: { callId: string; callerId: string; rtcConfig?: RTCConfiguration }) => void;
+  public onCallInitiated?: (data: { callId: string; receiverId: string; rtcConfig?: RTCConfiguration }) => void;
+  public onCallAnswered?: (data: { callId: string; receiverId?: string }) => void;
+  public onCallConnected?: (data: { callId: string; callerId?: string }) => void;
+  public onCallRejected?: (data: { callId: string }) => void;
+  public onCallEnded?: (data: { callId: string; endedBy: string }) => void;
+  public onCallWebRTCOffer?: (data: { callId: string; offer: RTCSessionDescriptionInit; callerId: string }) => void;
+  public onCallWebRTCAnswer?: (data: { callId: string; answer: RTCSessionDescriptionInit; receiverId: string }) => void;
+  public onCallWebRTCICECandidate?: (data: { callId: string; candidate: RTCIceCandidateInit; senderId: string }) => void;
+  public onCallError?: (error: { message: string }) => void;
 
   constructor(token: string, callbacks: ChatSocketCallbacks = {}) {
     this.token = token;
@@ -167,6 +222,26 @@ export class ChatSocket {
       this.callbacks.onChatLeft?.(data);
     });
 
+    // Chat list events (Server → Client)
+    this.socket.on('chat:new', (chat: Chat) => {
+      console.log('✅ [SOCKET] New chat created:', {
+        chatId: chat.chatId || chat.id,
+        otherParticipant: chat.otherParticipant?.username || chat.otherParticipant?.phone,
+        timestamp: new Date().toISOString(),
+      });
+      this.callbacks.onChatNew?.(chat);
+    });
+
+    this.socket.on('chat:updated', (chat: Chat) => {
+      console.log('✅ [SOCKET] Chat updated:', {
+        chatId: chat.chatId || chat.id,
+        hasLastMessage: !!chat.lastMessage,
+        lastMessageAt: chat.lastMessageAt,
+        timestamp: new Date().toISOString(),
+      });
+      this.callbacks.onChatUpdated?.(chat);
+    });
+
     // Error events
     this.socket.on('error', (error: any) => {
       console.error('❌ [SOCKET] Socket error:', error);
@@ -182,6 +257,67 @@ export class ChatSocket {
     this.socket.on('user:offline', (userId: string) => {
       console.log('User offline:', userId);
       this.callbacks.onUserOffline?.(userId);
+    });
+
+    // Call events (Server → Client)
+    this.socket.on('call:incoming', (data: { callId: string; callerId: string; rtcConfig?: RTCConfiguration }) => {
+      console.log('📞 [SOCKET] Incoming call:', data);
+      this.callbacks.onCallIncoming?.(data);
+      this.onCallIncoming?.(data);
+    });
+
+    this.socket.on('call:initiated', (data: { callId: string; receiverId: string; rtcConfig?: RTCConfiguration }) => {
+      console.log('📞 [SOCKET] Call initiated:', data);
+      this.callbacks.onCallInitiated?.(data);
+      this.onCallInitiated?.(data);
+    });
+
+    this.socket.on('call:answered', (data: { callId: string; receiverId?: string }) => {
+      console.log('📞 [SOCKET] Call answered:', data);
+      this.callbacks.onCallAnswered?.(data);
+      this.onCallAnswered?.(data);
+    });
+
+    this.socket.on('call:connected', (data: { callId: string; callerId?: string }) => {
+      console.log('📞 [SOCKET] Call connected:', data);
+      this.callbacks.onCallConnected?.(data);
+      this.onCallConnected?.(data);
+    });
+
+    this.socket.on('call:rejected', (data: { callId: string }) => {
+      console.log('📞 [SOCKET] Call rejected:', data);
+      this.callbacks.onCallRejected?.(data);
+      this.onCallRejected?.(data);
+    });
+
+    this.socket.on('call:ended', (data: { callId: string; endedBy: string }) => {
+      console.log('📞 [SOCKET] Call ended:', data);
+      this.callbacks.onCallEnded?.(data);
+      this.onCallEnded?.(data);
+    });
+
+    this.socket.on('call:webrtc-offer', (data: { callId: string; offer: RTCSessionDescriptionInit; callerId: string }) => {
+      console.log('📞 [SOCKET] WebRTC offer received:', data.callId);
+      this.callbacks.onCallWebRTCOffer?.(data);
+      this.onCallWebRTCOffer?.(data);
+    });
+
+    this.socket.on('call:webrtc-answer', (data: { callId: string; answer: RTCSessionDescriptionInit; receiverId: string }) => {
+      console.log('📞 [SOCKET] WebRTC answer received:', data.callId);
+      this.callbacks.onCallWebRTCAnswer?.(data);
+      this.onCallWebRTCAnswer?.(data);
+    });
+
+    this.socket.on('call:webrtc-ice-candidate', (data: { callId: string; candidate: RTCIceCandidateInit; senderId: string }) => {
+      console.log('📞 [SOCKET] ICE candidate received:', data.callId);
+      this.callbacks.onCallWebRTCICECandidate?.(data);
+      this.onCallWebRTCICECandidate?.(data);
+    });
+
+    this.socket.on('call:error', (error: { message: string }) => {
+      console.error('📞 [SOCKET] Call error:', error);
+      this.callbacks.onCallError?.(error);
+      this.onCallError?.(error);
     });
   }
 
@@ -295,5 +431,64 @@ export class ChatSocket {
    */
   isConnected(): boolean {
     return this.socket?.connected ?? false;
+  }
+
+  /**
+   * Emit call events (Client → Server)
+   */
+  emitCallInitiate(receiverId: string): void {
+    if (!this.socket?.connected) {
+      console.error('❌ [SOCKET] Cannot initiate call: Socket not connected');
+      return;
+    }
+    this.socket.emit('call:initiate', { receiverId });
+  }
+
+  emitCallAnswer(callId: string): void {
+    if (!this.socket?.connected) {
+      console.error('❌ [SOCKET] Cannot answer call: Socket not connected');
+      return;
+    }
+    this.socket.emit('call:answer', { callId });
+  }
+
+  emitCallReject(callId: string): void {
+    if (!this.socket?.connected) {
+      console.error('❌ [SOCKET] Cannot reject call: Socket not connected');
+      return;
+    }
+    this.socket.emit('call:reject', { callId });
+  }
+
+  emitCallEnd(callId: string): void {
+    if (!this.socket?.connected) {
+      console.error('❌ [SOCKET] Cannot end call: Socket not connected');
+      return;
+    }
+    this.socket.emit('call:end', { callId });
+  }
+
+  emitWebRTCOffer(callId: string, offer: RTCSessionDescriptionInit, receiverId: string): void {
+    if (!this.socket?.connected) {
+      console.error('❌ [SOCKET] Cannot send WebRTC offer: Socket not connected');
+      return;
+    }
+    this.socket.emit('call:webrtc-offer', { callId, offer, receiverId });
+  }
+
+  emitWebRTCAnswer(callId: string, answer: RTCSessionDescriptionInit, callerId: string): void {
+    if (!this.socket?.connected) {
+      console.error('❌ [SOCKET] Cannot send WebRTC answer: Socket not connected');
+      return;
+    }
+    this.socket.emit('call:webrtc-answer', { callId, answer, callerId });
+  }
+
+  emitICECandidate(callId: string, candidate: RTCIceCandidateInit, receiverId: string): void {
+    if (!this.socket?.connected) {
+      console.error('❌ [SOCKET] Cannot send ICE candidate: Socket not connected');
+      return;
+    }
+    this.socket.emit('call:webrtc-ice-candidate', { callId, candidate, receiverId });
   }
 }

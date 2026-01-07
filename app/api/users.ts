@@ -14,6 +14,8 @@ export interface User {
   id: string;
   phone: string;
   username?: string;
+  email?: string;
+  authMethod?: 'phone' | 'google' | 'phone+google';
   isOnline?: boolean;
   lastSeen?: string;
   createdAt?: string;

@@ -21,8 +21,10 @@ interface ChatWindowProps {
   callHistory?: Call[];
   currentUserId: string;
   otherUserName?: string;
-  onSendMessage: (content: string) => void;
+  onSendMessage: (content: string, type?: 'text' | 'image' | 'video' | 'file') => void;
   disabled?: boolean;
+  token?: string;
+  chatId?: string;
 }
 
 export default function ChatWindow({
@@ -32,6 +34,8 @@ export default function ChatWindow({
   otherUserName,
   onSendMessage,
   disabled = false,
+  token,
+  chatId,
 }: ChatWindowProps) {
   const [inputValue, setInputValue] = useState('');
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -83,10 +87,39 @@ export default function ChatWindow({
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, callHistory, mergedItems.length]);
 
-  const handleSend = () => {
-    if (inputValue.trim() && !disabled) {
-      onSendMessage(inputValue.trim());
-      setInputValue('');
+  const handleSend = (type?: 'text' | 'image' | 'video' | 'file', content?: string) => {
+    const messageContent = content || inputValue.trim();
+    if (messageContent && !disabled) {
+      onSendMessage(messageContent, type || 'text');
+      if (!content) {
+        setInputValue('');
+      }
+    }
+  };
+
+  const handleEditMessage = async (messageId: string, newContent: string) => {
+    if (!token) return;
+
+    try {
+      const { editMessage } = await import('../api/messages');
+      await editMessage(token, messageId, newContent);
+      // Message will be updated via socket or refresh
+    } catch (err: any) {
+      console.error('Failed to edit message:', err);
+      alert(err.response?.data?.message || 'Failed to edit message');
+    }
+  };
+
+  const handleDeleteMessage = async (messageId: string, deleteForEveryone: boolean) => {
+    if (!token) return;
+
+    try {
+      const { deleteMessage } = await import('../api/messages');
+      await deleteMessage(token, messageId, deleteForEveryone);
+      // Message will be removed via socket or refresh
+    } catch (err: any) {
+      console.error('Failed to delete message:', err);
+      alert(err.response?.data?.message || 'Failed to delete message');
     }
   };
 
@@ -108,6 +141,9 @@ export default function ChatWindow({
                   message={message}
                   isSent={message.senderId === currentUserId}
                   otherUserName={otherUserName}
+                  currentUserId={currentUserId}
+                  onEdit={handleEditMessage}
+                  onDelete={handleDeleteMessage}
                 />
               );
             } else {
@@ -132,6 +168,7 @@ export default function ChatWindow({
         onChange={setInputValue}
         onSend={handleSend}
         disabled={disabled}
+        token={token}
       />
     </div>
   );

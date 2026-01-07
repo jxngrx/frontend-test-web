@@ -29,6 +29,7 @@ export interface MessageApiResponse {
   status: MessageStatus;
   createdAt: string;
   updatedAt?: string;
+  editedAt?: string;
 }
 
 // Internal Message format (what we use in the app)
@@ -42,6 +43,7 @@ export interface Message {
   isDelivered: boolean;
   createdAt: string;
   updatedAt?: string;
+  editedAt?: string;
 }
 
 /**
@@ -58,6 +60,7 @@ export const transformMessage = (apiMessage: MessageApiResponse): Message => {
     isDelivered: apiMessage.status === 'delivered' || apiMessage.status === 'read',
     createdAt: apiMessage.createdAt,
     updatedAt: apiMessage.updatedAt,
+    editedAt: (apiMessage as any).editedAt,
   };
 };
 
@@ -75,8 +78,9 @@ export interface MessageResponse {
 
 export interface MessagesListResponse {
   success?: boolean;
-  data: MessageApiResponse[] | { messages?: MessageApiResponse[] };
+  data: MessageApiResponse[] | { messages?: MessageApiResponse[] } | { data?: { messages?: MessageApiResponse[] } };
   message?: string;
+  messages?: MessageApiResponse[];
 }
 
 export interface EditMessageRequest {
@@ -192,12 +196,12 @@ export const getChatMessages = async (
       console.log('✅ [API] Messages found in response.data (array):', messages.length);
     }
     // Case 2: response.data.data.messages (most common - {success: true, data: {messages: [...]}})
-    else if (response.data.data && typeof response.data.data === 'object' && Array.isArray(response.data.data.messages)) {
+    else if (response.data.data && typeof response.data.data === 'object' && !Array.isArray(response.data.data) && 'messages' in response.data.data && Array.isArray(response.data.data.messages)) {
       messages = response.data.data.messages;
       console.log('✅ [API] Messages found in response.data.data.messages:', messages.length);
     }
     // Case 3: response.data.messages is an array
-    else if (response.data.messages && Array.isArray(response.data.messages)) {
+    else if ('messages' in response.data && Array.isArray(response.data.messages)) {
       messages = response.data.messages;
       console.log('✅ [API] Messages found in response.data.messages:', messages.length);
     }

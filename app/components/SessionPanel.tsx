@@ -17,6 +17,10 @@ import { getProfile, searchUsers, User } from '../api/users';
 import { getUserChats, createOrGetChat, Chat } from '../api/chats';
 import { getChatMessages, sendMessage, Message } from '../api/messages';
 import { getCallHistory, Call } from '../api/calls';
+import { registerDevice } from '../api/devices';
+import { createSession } from '../api/sessions';
+import { getDeviceInfo } from '../utils/device';
+import { getCurrentLocation } from '../utils/location';
 import { ChatSocket } from '../sockets/chatSocket';
 import ChatWindow from './ChatWindow';
 import VoiceCallComponent from './VoiceCallComponent';
@@ -124,6 +128,13 @@ export default function ChatApp() {
       return;
     }
 
+    // Basic phone validation (E.164 format)
+    const phoneRegex = /^\+?[1-9]\d{1,14}$/;
+    if (!phoneRegex.test(phone.replace(/\s/g, ''))) {
+      setAuthError('Please enter a valid phone number (E.164 format, e.g., +1234567890)');
+      return;
+    }
+
     try {
       setAuthError(null);
       await requestOTP(phone);
@@ -135,6 +146,7 @@ export default function ChatApp() {
 
   /**
    * Step 2: Verify OTP and initialize session
+   * Includes device registration and session creation
    */
   const handleVerifyOTP = async () => {
     if (!otp.trim()) {
@@ -144,7 +156,18 @@ export default function ChatApp() {
 
     try {
       setAuthError(null);
-      const response = await verifyOTP(phone, otp);
+
+      // Get device info and location
+      const deviceInfo = getDeviceInfo();
+      const location = await getCurrentLocation(); // Optional, may be null
+
+      // Verify OTP with deviceId and location (if available)
+      const response = await verifyOTP(
+        phone,
+        otp,
+        deviceInfo.deviceId,
+        location || undefined
+      );
       const newToken = response.data.token;
       setToken(newToken);
 
@@ -153,6 +176,32 @@ export default function ChatApp() {
       setUserId(profile.id);
       setUsername(profile.username || null);
       setAuthStep('authenticated');
+
+      // Register device with full info
+      try {
+        await registerDevice(newToken, deviceInfo);
+        console.log('✅ [COMPONENT] Device registered successfully');
+      } catch (deviceError: any) {
+        console.warn('⚠️ [COMPONENT] Device registration failed:', deviceError);
+        // Continue even if device registration fails
+      }
+
+      // Create session if not already created during OTP verification
+      if (!response.data.session && deviceInfo.deviceId) {
+        try {
+          await createSession(newToken, {
+            deviceId: deviceInfo.deviceId,
+            loginMethod: 'phone',
+            location: location || undefined,
+          });
+          console.log('✅ [COMPONENT] Session created successfully');
+        } catch (sessionError: any) {
+          console.warn('⚠️ [COMPONENT] Session creation failed:', sessionError);
+          // Continue even if session creation fails
+        }
+      } else {
+        console.log('✅ [COMPONENT] Session already created during OTP verification');
+      }
 
       // Save session to localStorage
       const session = {
@@ -480,7 +529,7 @@ export default function ChatApp() {
    * Includes rate limiting protection and user-friendly error handling
    */
   const handleSendMessage = useCallback(
-    async (content: string) => {
+    async (content: string, type: 'text' | 'image' | 'video' | 'file' = 'text') => {
       if (!token || !selectedChatId || isSendingMessage) return;
 
       setIsSendingMessage(true);
@@ -489,13 +538,14 @@ export default function ChatApp() {
       try {
         console.log('💬 [COMPONENT] Sending message:', {
           content: content.substring(0, 50) + (content.length > 50 ? '...' : ''),
+          type,
           chatId: selectedChatId,
           userId,
           timestamp: new Date().toISOString(),
         });
 
         // Send via REST API
-        const newMessage = await sendMessage(token, selectedChatId, 'text', content);
+        const newMessage = await sendMessage(token, selectedChatId, type, content);
 
         console.log('✅ [COMPONENT] Message sent via API:', {
           messageId: newMessage.id,
@@ -831,6 +881,51 @@ export default function ChatApp() {
             )}
           </div>
           {authStep === 'authenticated' && (
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => {
+                  if (typeof window !== 'undefined') {
+                    window.location.href = '/settings';
+                  }
+                }}
+                className="px-3 py-1 bg-gray-700 hover:bg-gray-600 text-white rounded text-sm"
+                title="Settings"
+              >
+                <svg
+                  className="w-5 h-5"
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"
+                  />
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"
+                  />
+                </svg>
+              </button>
+              <button
+                onClick={() => {
+                  localStorage.removeItem(storageKey);
+                  if (typeof window !== 'undefined') {
+                    window.location.href = '/login';
+                  }
+                }}
+                className="px-3 py-1 bg-red-600 hover:bg-red-700 text-white rounded text-sm"
+                title="Logout"
+              >
+                Logout
+              </button>
+            </div>
+          )}
+          {authStep === 'authenticated' && (
             <div className="flex items-center gap-3">
               {/* Call button - show when chat is selected */}
               {selectedChatId && (() => {
@@ -1060,6 +1155,8 @@ export default function ChatApp() {
                   otherUserName={otherUserName || undefined}
                   onSendMessage={handleSendMessage}
                   disabled={!socket?.isConnected() || isSendingMessage}
+                  token={token || undefined}
+                  chatId={selectedChatId || undefined}
                 />
               </>
             ) : (

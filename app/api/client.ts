@@ -60,11 +60,37 @@ export const createApiClient = (token?: string) => {
     client.defaults.headers.common['Authorization'] = `Bearer ${token}`;
   }
 
-  // Add request interceptor to handle retries
+  // Add response interceptor to handle errors and retries
   client.interceptors.response.use(
     (response) => response,
     async (error: AxiosError) => {
       const originalRequest = error.config as any;
+
+      // Handle 401 (Unauthorized) - redirect to login
+      if (error.response?.status === 401) {
+        // Clear session
+        if (typeof window !== 'undefined') {
+          localStorage.removeItem('chat_session');
+          localStorage.removeItem('auth_token');
+          // Redirect to login if not already there
+          if (window.location.pathname !== '/login') {
+            window.location.href = '/login';
+          }
+        }
+        return Promise.reject(new Error('Session expired. Please login again.'));
+      }
+
+      // Handle 403 (Forbidden)
+      if (error.response?.status === 403) {
+        const message = (error.response.data as any)?.message || 'Permission denied';
+        return Promise.reject(new Error(message));
+      }
+
+      // Handle 404 (Not Found)
+      if (error.response?.status === 404) {
+        const message = (error.response.data as any)?.message || 'Resource not found';
+        return Promise.reject(new Error(message));
+      }
 
       // Handle 429 errors with retry
       if (error.response?.status === 429 && !originalRequest._retry) {
@@ -82,7 +108,14 @@ export const createApiClient = (token?: string) => {
         }
       }
 
-      return Promise.reject(error);
+      // Handle 500 (Server Error)
+      if (error.response?.status === 500) {
+        return Promise.reject(new Error('Server error. Please try again later.'));
+      }
+
+      // Handle other errors
+      const message = (error.response?.data as any)?.message || error.message || 'An error occurred';
+      return Promise.reject(new Error(message));
     }
   );
 

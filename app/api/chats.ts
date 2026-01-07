@@ -74,7 +74,7 @@ export const createOrGetChat = async (
 
   console.log('✅ [API] Chat created/retrieved:', {
     chatId: response.data.data.id,
-    participants: response.data.data.participants.map(p => ({ id: p.id, phone: p.phone })),
+    participants: response.data.data.participants?.map(p => ({ id: p.id, phone: p.phone })) || [],
     hasLastMessage: !!response.data.data.lastMessage,
     response: response.data,
   });

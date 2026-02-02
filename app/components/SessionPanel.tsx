@@ -12,7 +12,6 @@
 'use client';
 
 import { useEffect, useState, useCallback, useRef } from 'react';
-import { requestOTP, verifyOTP } from '../api/auth';
 import { getProfile, searchUsers, User } from '../api/users';
 import { getUserChats, createOrGetChat, Chat } from '../api/chats';
 import { getChatMessages, sendMessage, Message } from '../api/messages';
@@ -32,11 +31,10 @@ export default function ChatApp() {
 
   // Authentication state (isolated per session)
   const [phone, setPhone] = useState('');
-  const [otp, setOtp] = useState('');
   const [token, setToken] = useState<string | null>(null);
   const [userId, setUserId] = useState<string | null>(null);
   const [username, setUsername] = useState<string | null>(null);
-  const [authStep, setAuthStep] = useState<'phone' | 'otp' | 'authenticated'>('phone');
+  const [authStep, setAuthStep] = useState<'phone' | 'otp' | 'authenticated'>('authenticated');
   const [authError, setAuthError] = useState<string | null>(null);
 
   // Load session from localStorage on mount
@@ -119,105 +117,9 @@ export default function ChatApp() {
     endCall: endCallHandler,
   } = useVoiceCall(socket, token);
 
-  /**
-   * Step 1: Request OTP
-   */
-  const handleRequestOTP = async () => {
-    if (!phone.trim()) {
-      setAuthError('Please enter a phone number');
-      return;
-    }
 
-    // Basic phone validation (E.164 format)
-    const phoneRegex = /^\+?[1-9]\d{1,14}$/;
-    if (!phoneRegex.test(phone.replace(/\s/g, ''))) {
-      setAuthError('Please enter a valid phone number (E.164 format, e.g., +1234567890)');
-      return;
-    }
 
-    try {
-      setAuthError(null);
-      await requestOTP(phone);
-      setAuthStep('otp');
-    } catch (error: any) {
-      setAuthError(error.response?.data?.message || 'Failed to request OTP');
-    }
-  };
 
-  /**
-   * Step 2: Verify OTP and initialize session
-   * Includes device registration and session creation
-   */
-  const handleVerifyOTP = async () => {
-    if (!otp.trim()) {
-      setAuthError('Please enter OTP');
-      return;
-    }
-
-    try {
-      setAuthError(null);
-
-      // Get device info and location
-      const deviceInfo = getDeviceInfo();
-      const location = await getCurrentLocation(); // Optional, may be null
-
-      // Verify OTP with deviceId and location (if available)
-      const response = await verifyOTP(
-        phone,
-        otp,
-        deviceInfo.deviceId,
-        location || undefined
-      );
-      const newToken = response.data.token;
-      setToken(newToken);
-
-      // Get user profile
-      const profile = await getProfile(newToken);
-      setUserId(profile.id);
-      setUsername(profile.username || null);
-      setAuthStep('authenticated');
-
-      // Register device with full info
-      try {
-        await registerDevice(newToken, deviceInfo);
-        console.log('✅ [COMPONENT] Device registered successfully');
-      } catch (deviceError: any) {
-        console.warn('⚠️ [COMPONENT] Device registration failed:', deviceError);
-        // Continue even if device registration fails
-      }
-
-      // Create session if not already created during OTP verification
-      if (!response.data.session && deviceInfo.deviceId) {
-        try {
-          await createSession(newToken, {
-            deviceId: deviceInfo.deviceId,
-            loginMethod: 'phone',
-            location: location || undefined,
-          });
-          console.log('✅ [COMPONENT] Session created successfully');
-        } catch (sessionError: any) {
-          console.warn('⚠️ [COMPONENT] Session creation failed:', sessionError);
-          // Continue even if session creation fails
-        }
-      } else {
-        console.log('✅ [COMPONENT] Session already created during OTP verification');
-      }
-
-      // Save session to localStorage
-      const session = {
-        token: newToken,
-        userId: profile.id,
-        username: profile.username || null,
-        phone: phone,
-      };
-      localStorage.setItem(storageKey, JSON.stringify(session));
-      console.log('💾 [COMPONENT] Session saved after login:', { userId: profile.id });
-
-      // Socket will be initialized by the useEffect hook
-    } catch (error: any) {
-      setAuthError(error.response?.data?.message || 'Failed to verify OTP');
-    }
-  };
 
   /**
    * Load all chats for the current user
@@ -962,44 +864,7 @@ export default function ChatApp() {
       </div>
 
       {/* Authentication UI */}
-      {authStep === 'phone' && (
-        <div className="p-4 space-y-2 mt-[80px]">
-          <input
-            type="text"
-            value={phone}
-            onChange={(e) => setPhone(e.target.value)}
-            placeholder="Phone number (e.g., +1234567890)"
-            className="w-full px-3 py-2 border border-gray-600 rounded bg-gray-700 text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
-          />
-          <button
-            onClick={handleRequestOTP}
-            className="w-full px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 transition-colors"
-          >
-            Request OTP
-          </button>
-          {authError && <div className="text-red-400 text-sm">{authError}</div>}
-        </div>
-      )}
 
-      {authStep === 'otp' && (
-        <div className="p-4 space-y-2 mt-[80px]">
-          <div className="text-sm text-gray-400">OTP sent to {phone}</div>
-          <input
-            type="text"
-            value={otp}
-            onChange={(e) => setOtp(e.target.value)}
-            placeholder="Enter OTP"
-            className="w-full px-3 py-2 border border-gray-600 rounded bg-gray-700 text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
-          />
-          <button
-            onClick={handleVerifyOTP}
-            className="w-full px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 transition-colors"
-          >
-            Verify OTP
-          </button>
-          {authError && <div className="text-red-400 text-sm">{authError}</div>}
-        </div>
-      )}
 
       {/* Main chat interface */}
       {authStep === 'authenticated' && (

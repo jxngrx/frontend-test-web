@@ -13,7 +13,7 @@ import { createApiClient } from './client';
 export interface Session {
   sessionId: string;
   deviceId: string;
-  loginMethod: 'phone' | 'google';
+  loginMethod: 'phone' | 'google' | 'password';
   expiresAt: string;
   isActive: boolean;
   createdAt?: string;
@@ -22,7 +22,7 @@ export interface Session {
 
 export interface CreateSessionRequest {
   deviceId: string;
-  loginMethod: 'phone' | 'google';
+  loginMethod: 'phone' | 'google' | 'password';
   location?: {
     latitude: number;
     longitude: number;

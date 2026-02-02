@@ -1,126 +1,72 @@
 /**
  * Authentication API
  *
- * Maps exactly to the Authentication endpoints from Postman collection:
- * - POST /api/v1/auth/request-otp
- * - POST /api/v1/auth/verify-otp
- * - POST /api/v1/auth/google (Google OAuth)
+ * Maps exactly to the Authentication endpoints from the new spec:
+ * - POST /api/v1/auth/register
+ * - POST /api/v1/auth/login
  */
 
 import { createApiClient } from './client';
+import { generateDeviceId } from '../utils/device';
 
-export interface RequestOTPRequest {
-  phone: string;
+export interface RegisterRequest {
+  username?: string;
+  password?: string; // Required in spec but making optional here to avoid TS strictness before validation
+  deviceId: string;
+  phone?: string;
 }
 
-export interface VerifyOTPRequest {
-  phone: string;
-  otp: string;
-  deviceId?: string;
-  location?: {
-    latitude: number;
-    longitude: number;
-    accuracy?: number;
-  };
-}
-
-export interface GoogleOAuthRequest {
-  idToken: string;
-  phone: string;
-  deviceId?: string;
-  location?: {
-    latitude: number;
-    longitude: number;
-    accuracy?: number;
-  };
+export interface LoginRequest {
+  username: string;
+  password?: string;
+  deviceId: string;
 }
 
 export interface User {
   id: string;
+  username: string;
   phone: string;
-  username?: string;
-  email?: string;
-  authMethod?: 'phone' | 'google' | 'phone+google';
-}
-
-export interface Session {
-  sessionId: string;
-  deviceId: string;
-  loginMethod: 'phone' | 'google';
-  expiresAt: string;
-  isActive: boolean;
 }
 
 export interface AuthResponse {
-  success?: boolean;
+  success: boolean;
   data: {
     token: string;
     user: User;
-    session?: Session;
   };
-  message?: string;
+  message: string;
 }
 
 /**
- * Request OTP for phone number authentication
- * POST /api/v1/auth/request-otp
+ * Register a new user
+ * POST /api/v1/auth/register
  */
-export const requestOTP = async (phone: string): Promise<void> => {
+export const register = async (data: Omit<RegisterRequest, 'deviceId'>): Promise<AuthResponse> => {
   const client = createApiClient();
-  await client.post('/api/v1/auth/request-otp', { phone });
-};
+  const deviceId = generateDeviceId();
 
-/**
- * Verify OTP and get JWT token
- * POST /api/v1/auth/verify-otp
- * Returns token that should be stored for subsequent API calls
- * Supports optional deviceId and location for session creation
- */
-export const verifyOTP = async (
-  phone: string,
-  otp: string,
-  deviceId?: string,
-  location?: {
-    latitude: number;
-    longitude: number;
-    accuracy?: number;
-  }
-): Promise<AuthResponse> => {
-  const client = createApiClient();
-  const payload: VerifyOTPRequest = { phone, otp };
-  if (deviceId) {
-    payload.deviceId = deviceId;
-  }
-  if (location) {
-    payload.location = location;
-  }
-  const response = await client.post<AuthResponse>('/api/v1/auth/verify-otp', payload);
+  const payload: RegisterRequest = {
+    ...data,
+    deviceId
+  };
+
+  const response = await client.post<AuthResponse>('/api/v1/auth/register', payload);
   return response.data;
 };
 
 /**
- * Authenticate using Google OAuth
- * POST /api/v1/auth/google
- * Phone number is mandatory even for Google OAuth
+ * Login user
+ * POST /api/v1/auth/login
  */
-export const googleOAuth = async (
-  idToken: string,
-  phone: string,
-  deviceId?: string,
-  location?: {
-    latitude: number;
-    longitude: number;
-    accuracy?: number;
-  }
-): Promise<AuthResponse> => {
+export const login = async (data: Omit<LoginRequest, 'deviceId'>): Promise<AuthResponse> => {
   const client = createApiClient();
-  const payload: GoogleOAuthRequest = { idToken, phone };
-  if (deviceId) {
-    payload.deviceId = deviceId;
-  }
-  if (location) {
-    payload.location = location;
-  }
-  const response = await client.post<AuthResponse>('/api/v1/auth/google', payload);
+  const deviceId = generateDeviceId();
+
+  const payload: LoginRequest = {
+    ...data,
+    deviceId
+  };
+
+  const response = await client.post<AuthResponse>('/api/v1/auth/login', payload);
   return response.data;
 };

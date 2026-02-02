@@ -12,7 +12,7 @@ import { createApiClient } from './client';
 
 export interface User {
   id: string;
-  phone: string;
+  phone?: string | null;
   username?: string;
   email?: string;
   authMethod?: 'phone' | 'google' | 'phone+google';
@@ -62,6 +62,19 @@ export const updateUsername = async (
 ): Promise<void> => {
   const client = createApiClient(token);
   await client.put('/api/v1/users/username', { username });
+};
+
+/**
+ * Update phone number
+ * PUT /api/v1/users/phone
+ * Requires: Bearer token
+ */
+export const updatePhone = async (
+  token: string,
+  phone: string
+): Promise<void> => {
+  const client = createApiClient(token);
+  await client.put('/api/v1/users/phone', { phone });
 };
 
 /**

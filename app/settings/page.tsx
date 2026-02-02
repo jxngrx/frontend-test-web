@@ -9,7 +9,7 @@
 
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
-import { getProfile, updateUsername, User } from '../api/users';
+import { getProfile, updateUsername, updatePhone, User } from '../api/users';
 import { getUserDevices, Device } from '../api/devices';
 import { getUserSessions, deactivateSession, deactivateAllSessions, Session } from '../api/sessions';
 import { getContacts, Contact } from '../api/contacts';
@@ -30,6 +30,7 @@ export default function SettingsPage() {
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
   const [newUsername, setNewUsername] = useState('');
+  const [newPhone, setNewPhone] = useState('');
   const [phoneNumbers, setPhoneNumbers] = useState('');
   const [syncingContacts, setSyncingContacts] = useState(false);
 
@@ -62,6 +63,7 @@ export default function SettingsPage() {
         if (profile) {
           setUser(profile);
           setNewUsername(profile.username || '');
+          setNewPhone(profile.phone || '');
         }
         setDevices(userDevices);
         setSessions(userSessions);
@@ -103,6 +105,30 @@ export default function SettingsPage() {
       setSuccess('Username updated successfully');
     } catch (err: any) {
       setError(err.response?.data?.message || 'Failed to update username');
+    }
+  };
+
+  const handleUpdatePhone = async () => {
+    if (!token || !newPhone.trim()) {
+      setError('Phone number cannot be empty');
+      return;
+    }
+
+    // Basic validation
+    if (!/^\+?[1-9]\d{1,14}$/.test(newPhone.replace(/\s/g, ''))) {
+      setError('Please enter a valid phone number (E.164 format)');
+      return;
+    }
+
+    try {
+      setError(null);
+      setSuccess(null);
+      await updatePhone(token, newPhone);
+      const updatedProfile = await getProfile(token);
+      setUser(updatedProfile);
+      setSuccess('Phone number updated successfully');
+    } catch (err: any) {
+      setError(err.response?.data?.message || 'Failed to update phone number');
     }
   };
 
@@ -221,7 +247,21 @@ export default function SettingsPage() {
             <div className="space-y-4">
               <div>
                 <label className="block text-gray-300 mb-2">Phone</label>
-                <div className="text-gray-400">{user.phone}</div>
+                <div className="flex gap-2">
+                  <input
+                    type="tel"
+                    value={newPhone}
+                    onChange={(e) => setNewPhone(e.target.value)}
+                    placeholder="+1234567890"
+                    className="flex-1 px-4 py-2 bg-gray-700 text-white rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                  <button
+                    onClick={handleUpdatePhone}
+                    className="px-4 py-2 bg-blue-600 hover:bg-blue-700 rounded"
+                  >
+                    Update
+                  </button>
+                </div>
               </div>
               {user.email && (
                 <div>

@@ -7,9 +7,10 @@
  */
 
 import axios, { AxiosError, AxiosInstance } from 'axios';
+import { generateDeviceId } from '../utils/device';
 
 // Base URL from Postman collection (default: http://localhost:3000)
-const BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:3000';
+const BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || 'https://chatapp.jxngrx.in';
 
 /**
  * Retry request with exponential backoff for 429 errors
@@ -58,6 +59,12 @@ export const createApiClient = (token?: string) => {
   // Add auth token to all requests if provided
   if (token) {
     client.defaults.headers.common['Authorization'] = `Bearer ${token}`;
+  }
+
+  // Add device ID to all requests
+  const deviceId = generateDeviceId();
+  if (deviceId) {
+    client.defaults.headers.common['X-Device-Id'] = deviceId;
   }
 
   // Add response interceptor to handle errors and retries

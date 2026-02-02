@@ -24,7 +24,7 @@ import { io, Socket } from 'socket.io-client';
 import { Message, MessageApiResponse, transformMessage } from '../api/messages';
 
 // Base URL for Socket.IO (same as REST API)
-const SOCKET_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:3000';
+const SOCKET_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || 'https://chatapp.jxngrx.in';
 
 export interface Chat {
   id: string;
@@ -142,7 +142,7 @@ export class ChatSocket {
       this.callbacks.onDisconnect?.();
     });
 
-    this.socket.on('connect_error', (error) => {
+    this.socket.on('connect_error', (error: any) => {
       console.error('❌ [SOCKET] Connection error:', {
         error: error.message,
         type: error.type,
